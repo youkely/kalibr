@@ -87,6 +87,9 @@ def parseArgs():
     
     groupTarget = parser.add_argument_group('Calibration target configuration')
     groupTarget.add_argument('--target', dest='targetYaml', help='Calibration target configuration as yaml file', required=True)
+        
+    groupTarget = parser.add_argument_group('Calibration initialization configuration')
+    groupTarget.add_argument('--cam', dest='chainYaml', default='',help='Calibration initialization configuration as yaml file')
     
     groupTarget = parser.add_argument_group('Image synchronization')
     groupTarget.add_argument('--approx-sync', dest='max_delta_approxsync', type=float, default=0.02, help='Time tolerance for approximate image synchronization [s] (default: %(default)s)')
@@ -181,9 +184,15 @@ def main():
             for obs in observations:
                 obsdb.addObservation(cam_id, obs)
 
-            #initialize the intrinsics
-            if not cam.initGeometryFromObservations(observations):
-                raise RuntimeError("Could not initialize the intrinsics for camera with topic: {0}. Try to use --verbose and check whether the calibration target extraction is successful.".format(topic))
+            if parsed.chainYaml != '':
+                #initialize the intrinsics
+                camchain = kc.ConfigReader.CameraChainParameters(parsed.chainYaml)
+                camConfig = camchain.getCameraParameters(cam_id)
+                cam.initGeometryFromConfig(camConfig, observations)
+
+            else:
+                if not cam.initGeometryFromObservations(observations):
+                    raise RuntimeError("Could not initialize the intrinsics for camera with topic: {0}. Try to use --verbose and check whether the calibration target extraction is successful.".format(topic))
             
             print "\tProjection initialized to: %s" % cam.geometry.projection().getParameters().flatten()
             print "\tDistortion initialized to: %s" % cam.geometry.projection().distortion().getParameters().flatten()
@@ -212,10 +221,16 @@ def main():
         try:
             #compute initial guesses for the baselines, intrinsics
             print "initializing initial guesses"
-            if len(cameraList)>1:
-                baseline_guesses = graph.getInitialGuesses(cameraList)
-            else:
-                baseline_guesses=[]
+            if parsed.chainYaml != '':
+                baseline_guesses = []
+                for baseline_id in range(0, numCams-1):
+                    baseline_HL = camchain.getExtrinsicsLastCamToHere(baseline_id+1)
+                    baseline_guesses.append(baseline_HL)
+            else:    
+                if len(cameraList)>1:
+                    baseline_guesses = graph.getInitialGuesses(cameraList)
+                else:
+                    baseline_guesses=[]
                 
             if parsed.verbose and len(cameraList)>1:
                 graph.plotGraph()

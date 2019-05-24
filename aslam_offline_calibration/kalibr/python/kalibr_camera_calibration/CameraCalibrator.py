@@ -72,6 +72,13 @@ class CameraGeometry(object):
         self.isGeometryInitialized = success        
         return success
 
+    def initGeometryFromConfig(self, camConfig, observations):
+        camera_dummy = cr.AslamCamera.fromParameters(camConfig)
+        self.geometry = camera_dummy.geometry
+        self.dv = self.model.designVariable(self.geometry)
+        self.isGeometryInitialized = True        
+
+
 class TargetDetector(object):
     def __init__(self, targetConfig, cameraGeometry, showCorners=False, showReproj=False, showOneStep=False):
         self.targetConfig = targetConfig
