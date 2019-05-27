@@ -184,11 +184,12 @@ def main():
             for obs in observations:
                 obsdb.addObservation(cam_id, obs)
 
-            if parsed.chainYaml != '':
+            if not parsed.chainYaml == '':
                 #initialize the intrinsics
                 camchain = kc.ConfigReader.CameraChainParameters(parsed.chainYaml)
                 camConfig = camchain.getCameraParameters(cam_id)
-                cam.initGeometryFromConfig(camConfig, observations)
+                cam.initGeometryFromConfig(camConfig)
+
 
             else:
                 if not cam.initGeometryFromObservations(observations):
@@ -221,7 +222,7 @@ def main():
         try:
             #compute initial guesses for the baselines, intrinsics
             print "initializing initial guesses"
-            if parsed.chainYaml != '':
+            if not parsed.chainYaml == '':
                 baseline_guesses = []
                 for baseline_id in range(0, numCams-1):
                     baseline_HL = camchain.getExtrinsicsLastCamToHere(baseline_id+1)

@@ -72,7 +72,7 @@ class CameraGeometry(object):
         self.isGeometryInitialized = success        
         return success
 
-    def initGeometryFromConfig(self, camConfig, observations):
+    def initGeometryFromConfig(self, camConfig):
         camera_dummy = cr.AslamCamera.fromParameters(camConfig)
         self.geometry = camera_dummy.geometry
         self.dv = self.model.designVariable(self.geometry)
