@@ -65,10 +65,12 @@ class CameraChainValidator(object):
         self.chainConfig = chainConfig
         self.numCameras = chainConfig.numCameras()
         self.bridge = CvBridge()
+        self.imgcount = 0
         
         #initialize the cameras in the chain
         self.G = igraph.Graph(self.numCameras)
         self.monovalidators=[]
+
         for cidx in range(0, self.numCameras):
             camConfig = chainConfig.getCameraParameters(cidx)
             
@@ -91,7 +93,8 @@ class CameraChainValidator(object):
             cidx_dest = edge.target
 
             edge["rect_map"]=dict();edge["R"]=dict();edge["A"]=dict();
-            
+            edge["reproj_errs"]=[]
+
             edge["rect_map"][cidx_src], \
             edge["rect_map"][cidx_dest], \
             edge["R"][cidx_src], \
@@ -112,6 +115,7 @@ class CameraChainValidator(object):
         timeNow = time.time()
         if (timeNow-self.timeLast < 1.0/rate) and self.timeLast!=0:
             return
+        self.imgcount += 1
         self.timeLast = timeNow
          
         #process the images of all cameras
@@ -264,6 +268,10 @@ class CameraChainValidator(object):
         if len(common_ids) > 0:
             #draw error statistics
             reproj_L2_errs = np.sum(np.abs(reproj_errs)**2, axis=-2)**(1./2)
+
+            #save the errors for reprojection error of edges
+            edge["reproj_errs"].append(reproj_L2_errs)
+
             outputList = [ ( "mean_x:  ", np.mean(reproj_errs[:,0]) ),
                            ( "std_x:   ", np.std(reproj_errs[:,0]) ),
                            ( "max_y:   ", np.max(reproj_errs[:,0]) ),
@@ -363,7 +371,45 @@ class CameraChainValidator(object):
                                                                  cv2.CV_16SC2)
         
         return (rect_map_x_a, rect_map_y_a), (rect_map_x_b, rect_map_y_b), Ra, Rb, A, A
-    
+    def printValidationResult(self):
+        camtag = parsed.chainYaml.translate(None, "<>:/\|?*").replace('.yaml', '', 1)
+        resultFile = "validation-result-" + camtag + ".txt"
+        f1=open(resultFile, 'w')
+        print >> f1, "Validation results "
+        print >> f1, "Processed {0} images".format(self.imgcount)
+        print >> f1, "===================="
+
+        for cidx in range(0, self.numCameras):
+            monovalidator = self.monovalidators[cidx]
+            if not monovalidator.reprojectionErrors == [] :
+                reprojectionErrors = np.concatenate( monovalidator.reprojectionErrors, axis=0 )
+                print >> f1, "Camera No.{0}".format(cidx)
+                print >> f1,  "     mean_L2: {0}".format(np.mean(reprojectionErrors))
+                print >> f1,  "     std_L2:  {0}".format(np.std(reprojectionErrors))
+                print >> f1,  "     max_L2:  {0}".format(np.max(reprojectionErrors))
+                print >> f1,  "     min_L2:  {0}".format(np.min(reprojectionErrors))
+
+            else:
+                print >> f1, "Camera No. {0} has no validation data".format(cidx)
+            print >> f1, ""
+
+        for edge in self.G.es:
+            cidx_src = edge.source
+            cidx_dest = edge.target
+            edge_idx = self.G.get_eid(cidx_src, cidx_dest)
+            edge = self.G.es[edge_idx]
+            if not edge["reproj_errs"] == [] :
+                reprojectionErrors = np.concatenate( edge["reproj_errs"], axis=0 )
+                print >> f1, "Rig between cam{0} and cam{1}".format(cidx_src, cidx_dest)
+                print >> f1,  "     mean_L2: {0}".format(np.mean(reprojectionErrors))
+                print >> f1,  "     std_L2:  {0}".format(np.std(reprojectionErrors))
+                print >> f1,  "     max_L2:  {0}".format(np.max(reprojectionErrors))
+                print >> f1,  "     min_L2:  {0}".format(np.min(reprojectionErrors))
+            else:
+                print >> f1, "No rig data for camera {} and {}".format(cidx_src, cidx_dest)
+            print >> f1, ""
+
+
         
 class MonoCameraValidator(object):
     def __init__(self, camConfig, targetParams):
@@ -462,6 +508,7 @@ if __name__ == "__main__":
     parser.add_argument('--target', dest='targetYaml', help='Calibration target configuration as yaml file', required=True)
     parser.add_argument('--cam', dest='chainYaml', help='Camera configuration as yaml file', required=True)
     parser.add_argument('--verbose', action='store_true', dest='verbose', help='Verbose output')
+    parser.add_argument('--save', action='store_true', dest='saveResult', help='Save result')
     parsed = parser.parse_args()
         
     if parsed.verbose:
@@ -487,3 +534,6 @@ if __name__ == "__main__":
         print "Shutting down"
     
     cv2.destroyAllWindows()
+    if parsed.saveResult:
+        chain_validator.printValidationResult()
+
