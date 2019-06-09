@@ -372,8 +372,8 @@ class CameraChainValidator(object):
         
         return (rect_map_x_a, rect_map_y_a), (rect_map_x_b, rect_map_y_b), Ra, Rb, A, A
     def printValidationResult(self):
-        camtag = parsed.chainYaml.translate(None, "<>:/\|?*").replace('.yaml', '', 1)
-        resultFile = "validation-result-" + camtag + ".txt"
+        camtag = parsed.chainYaml.translate(None, "<>:\|?*").replace('.yaml', '', 1)
+        resultFile = camtag + "-validation-result.txt"
         f1=open(resultFile, 'w')
         print >> f1, "Validation results "
         print >> f1, "Processed {0} images".format(self.imgcount)

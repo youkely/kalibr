@@ -6,6 +6,9 @@ import collections
 import igraph
 import itertools
 import sys
+import random
+import copy
+
 
 #simple data structure that stores all observations for a multi-cam system
 #and can approx. sync observations
@@ -67,6 +70,35 @@ class ObservationDatabase(object):
             #we already have a view from this camera on this timestamp --> STH IS WRONG
             sm.logError("[TargetViewTable]: Tried to add second view to a given cameraId & " 
                         "timestamp. Maybe try to reduce the approximate syncing tolerance..")
+
+    def preFilrering(self, maxCamsOccur):
+        camOccurDic2 = np.zeros([self.numCameras(), self.numCameras()])
+        camOccurDic3 = np.zeros([self.numCameras(), self.numCameras(), self.numCameras()])
+        camOccurDic4 = np.zeros([self.numCameras(), self.numCameras(), self.numCameras(), self.numCameras()])
+        timestamps_shuffled = copy.deepcopy(self.getAllViewTimestamps())
+        random.shuffle(timestamps_shuffled)
+        print "previous views {0}.".format(len(timestamps_shuffled))
+        for timestamp in timestamps_shuffled:
+            if len(self.getCamIdsAtTimestamp(timestamp)) < 2:
+                self.targetViews.pop(timestamp)
+            elif len(self.getCamIdsAtTimestamp(timestamp)) == 2:
+                camids = self.getCamIdsAtTimestamp(timestamp)
+                camOccurDic2[camids[0],camids[1]] += 1
+                if (camOccurDic2[camids[0],camids[1]] > maxCamsOccur):
+                    self.targetViews.pop(timestamp)
+            elif len(self.getCamIdsAtTimestamp(timestamp)) == 3:
+                camids = self.getCamIdsAtTimestamp(timestamp)
+                camOccurDic3[camids[0],camids[1],camids[2]] += 1
+                if (camOccurDic3[camids[0],camids[1],camids[2]] > maxCamsOccur):
+                    self.targetViews.pop(timestamp)
+            elif len(self.getCamIdsAtTimestamp(timestamp)) == 4:
+                camids = self.getCamIdsAtTimestamp(timestamp)
+                camOccurDic4[camids[0],camids[1],camids[2],camids[3]] += 1
+                if (camOccurDic4[camids[0],camids[1],camids[2],camids[3]] > maxCamsOccur):
+                    self.targetViews.pop(timestamp)
+        
+        print "after prefiltering views {0}.".format(len(self.getAllViewTimestamps()))
+
 
 
 #############################################################

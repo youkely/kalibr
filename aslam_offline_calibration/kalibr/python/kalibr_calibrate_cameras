@@ -98,7 +98,9 @@ def parseArgs():
     groupCalibrator.add_argument('--qr-tol', type=float, default=0.02, dest='qrTol', help='The tolerance on the factors of the QR decomposition (default: %(default)s)')
     groupCalibrator.add_argument('--mi-tol', type=float, default=0.2, dest='miTol', help='The tolerance on the mutual information for adding an image. Higher means fewer images will be added. Use -1 to force all images. (default: %(default)s)')
     groupCalibrator.add_argument('--no-shuffle', action='store_true', dest='noShuffle', help='Do not shuffle the dataset processing order')
-    
+    groupCalibrator.add_argument('--max-pair-view', type=int, default=500, dest='maxPairView', help='The maximum views for calibration for only a pair of cameras. (default: %(default)s)')
+
+
     outlierSettings = parser.add_argument_group('Outlier filtering options')
     outlierSettings.add_argument('--no-outliers-removal', action='store_false', default=True, dest='removeOutliers', help='Disable corner outlier filtering')
     outlierSettings.add_argument('--no-final-filtering', action='store_false', default=True, dest='allowEndFiltering', help='Disable filtering after all views have been processed.')
@@ -267,6 +269,10 @@ def main():
             doPlot = parsed.plot
             if doPlot:
                 print "Plotting during calibration. Things may be very slow (but you might learn something)."
+            
+            if parsed.maxPairView < 500:
+                print "---------------------pre filtering-----------------"
+                obsdb.preFilrering(parsed.maxPairView)
 
             #shuffle the views
             timestamps = obsdb.getAllViewTimestamps()
