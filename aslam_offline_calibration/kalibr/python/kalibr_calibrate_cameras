@@ -84,7 +84,10 @@ def parseArgs():
     groupSource.add_argument('--bag', dest='bagfile', help='The bag file with the data')
     groupSource.add_argument('--topics', nargs='+', dest='topics', help='The list of image topics', required=True)
     groupSource.add_argument('--bag-from-to', metavar='bag_from_to', type=float, nargs=2, help='Use the bag data starting from up to this time [s]')
-    
+    groupSource.add_argument('--bag-additional', dest='bagfile_add', help='The additional bag file with the data for recalibration')
+    groupSource.add_argument('--cam-to-replace', nargs='+', type=int, dest='cam_to_replace', help='The camera index whose data is updated by new bagfile')
+
+
     groupTarget = parser.add_argument_group('Calibration target configuration')
     groupTarget.add_argument('--target', dest='targetYaml', help='Calibration target configuration as yaml file', required=True)
         
@@ -161,6 +164,12 @@ def main():
     numCams = len(parsed.topics)
 
     obsdb = kcc.ObservationDatabase(parsed.max_delta_approxsync)
+
+    if parsed.cam_to_replace is not None and parsed.bagfile_add is not None:
+        print "prepare the merged bagfile"
+        inputbag = [parsed.bagfile, parsed.bagfile_add]
+        outputbag = parsed.bagfile + "merged.bag"
+        kc.rosbag_merge(outputbag, inputbag, verbose=True)
         
     for cam_id in range(0, numCams):
         topic = parsed.topics[cam_id]
@@ -170,8 +179,14 @@ def main():
 
         if modelName in cameraModels:
             #open dataset 
-            dataset = initBagDataset(parsed.bagfile, topic, parsed.bag_from_to)
-        
+            if parsed.cam_to_replace is not None:
+                if cam_id in parsed.cam_to_replace:
+                    dataset = initBagDataset(parsed.bagfile_add, topic, parsed.bag_from_to)
+                else:
+                    dataset = initBagDataset(outputbag, topic, parsed.bag_from_to)
+            else:
+                dataset = initBagDataset(parsed.bagfile, topic, parsed.bag_from_to)
+
             #create camera
             cameraModel = cameraModels[modelName]
             cam = kcc.CameraGeometry(cameraModel, targetConfig, dataset, verbose=(parsed.verbose or parsed.showextraction))
@@ -203,7 +218,10 @@ def main():
             cameraList.append(cam)
         else:
             raise RuntimeError( "Unknown camera model: {0}. Try {1}.".format(modelName, cameraModels.keys()) )
-        
+
+    if parsed.bagfile_add is not None and os.path.exists(outputbag):
+        os.remove(outputbag)
+
     if parsed.verbose:
         obsdb.printTable()
     
