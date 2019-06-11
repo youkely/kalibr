@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import rospy
+import rosbag
 from std_msgs.msg import String
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge, CvBridgeError
@@ -509,6 +510,7 @@ if __name__ == "__main__":
     parser.add_argument('--cam', dest='chainYaml', help='Camera configuration as yaml file', required=True)
     parser.add_argument('--verbose', action='store_true', dest='verbose', help='Verbose output')
     parser.add_argument('--save', action='store_true', dest='saveResult', help='Save result')
+    parser.add_argument('--input-bag', dest='inputBag', default='', help='Input bag data set for validation')
     parsed = parser.parse_args()
         
     if parsed.verbose:
@@ -526,14 +528,34 @@ if __name__ == "__main__":
     #create the validator
     chain_validator = CameraChainValidator(camchain, targetConfig)
     
-    #ros message loops
-    rospy.init_node('kalibr_validator', anonymous=True)
-    try:
-        rospy.spin()
-    except KeyboardInterrupt:
-        print "Shutting down"
-    
-    cv2.destroyAllWindows()
+    if parsed.inputBag == '':
+        #ros message loops
+        rospy.init_node('kalibr_validator', anonymous=True)
+        try:
+            rospy.spin()
+        except KeyboardInterrupt:
+            print "Shutting down"
+        cv2.destroyAllWindows()
+
+    else:
+        image_count = 0
+        image_topics = [val.topic for val in chain_validator.monovalidators]
+        image_msgs = [None] * chain_validator.numCameras
+        image_msgs_count = np.zeros(chain_validator.numCameras)
+        reader = kc.BagImageDatasetReader(parsed.inputBag, chain_validator.monovalidators[0].topic)
+
+        with rosbag.Bag(parsed.inputBag, 'r') as ib:
+            for topic, msg, t in ib:
+                if topic in image_topics and image_msgs_count[image_topics.index(topic)] == 0:
+                    image_msgs[image_topics.index(topic)] = msg
+                    image_msgs_count[image_topics.index(topic)] = 1
+                    if sum(image_msgs_count) == chain_validator.numCameras:
+                        chain_validator.synchronizedCallback(*image_msgs)
+                        image_msgs_count = np.zeros(chain_validator.numCameras)
+                        image_msgs = [None] * chain_validator.numCameras
+                        image_count += 1
+                        print "image No. {0} out of {1} images".format(image_count, reader.numImages())
+
     if parsed.saveResult:
         chain_validator.printValidationResult()
 
