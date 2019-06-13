@@ -385,6 +385,13 @@ class CameraChainValidator(object):
             if not monovalidator.reprojectionErrors == [] :
                 reprojectionErrors = np.concatenate( monovalidator.reprojectionErrors, axis=0 )
                 print >> f1, "Camera No.{0}".format(cidx)
+                print >> f1, "------------------------------------------"
+                if np.mean(reprojectionErrors) < parsed.camErrorTol:
+                    print >> f1, "------------good calibration--------------"
+                else:
+                    print >> f1, "-------------bad calibration--------------"
+                print >> f1, "------------------------------------------"
+
                 print >> f1,  "     mean_L2: {0}".format(np.mean(reprojectionErrors))
                 print >> f1,  "     std_L2:  {0}".format(np.std(reprojectionErrors))
                 print >> f1,  "     max_L2:  {0}".format(np.max(reprojectionErrors))
@@ -402,6 +409,12 @@ class CameraChainValidator(object):
             if not edge["reproj_errs"] == [] :
                 reprojectionErrors = np.concatenate( edge["reproj_errs"], axis=0 )
                 print >> f1, "Rig between cam{0} and cam{1}".format(cidx_src, cidx_dest)
+                print >> f1, "------------------------------------------"
+                if np.mean(reprojectionErrors) < parsed.rigErrorTol:
+                    print >> f1, "------------good calibration--------------"
+                else:
+                    print >> f1, "-------------bad calibration--------------"
+                print >> f1, "------------------------------------------"
                 print >> f1,  "     mean_L2: {0}".format(np.mean(reprojectionErrors))
                 print >> f1,  "     std_L2:  {0}".format(np.std(reprojectionErrors))
                 print >> f1,  "     max_L2:  {0}".format(np.max(reprojectionErrors))
@@ -511,6 +524,8 @@ if __name__ == "__main__":
     parser.add_argument('--verbose', action='store_true', dest='verbose', help='Verbose output')
     parser.add_argument('--save', action='store_true', dest='saveResult', help='Save result')
     parser.add_argument('--input-bag', dest='inputBag', default='', help='Input bag data set for validation')
+    parser.add_argument('--cam-error-thres', dest='camErrorTol', default=0.3, type=float, help='threshold for mono camera reprojection error')
+    parser.add_argument('--rig-error-thres', dest='rigErrorTol', default=0.5, type=float, help='threshold for camera rig reprojection error')
     parsed = parser.parse_args()
         
     if parsed.verbose:
