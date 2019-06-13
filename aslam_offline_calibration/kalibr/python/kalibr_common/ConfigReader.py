@@ -671,6 +671,13 @@ class CameraChainParameters(ParametersBase):
         param = CameraParameters("TEMP_CONFIG", createYaml=True)
         param.setYamlDict( self.data['cam{0}'.format(nr)] )
         return param
+
+    @catch_keyerror
+    def getCameraParametersforTopic(self, topic):
+        for camNr in range(0, self.numCameras()):
+            camConfig = self.getCameraParameters(camNr)
+            if camConfig.getRosTopic() == topic:
+                return camConfig, camNr
     
     def setExtrinsicsLastCamToHere(self, camNr, extrinsics):
         if camNr==0:
@@ -679,6 +686,33 @@ class CameraChainParameters(ParametersBase):
             raise RuntimeError("setExtrinsicsLastCamToHere(): provide extrinsics as an sm.Transformation object")
         
         self.data["cam{0}".format(camNr)]['T_cn_cnm1'] = extrinsics.T().tolist()
+
+
+    def setExtrinsicsSomeCamToHere(self, camNr, extrinsics, camNr_some):
+        if camNr==0:
+            raise RuntimeError("setExtrinsicsLastCamToHere(): can't set extrinsics for first cam in chain (cam0=base)")
+        if not isinstance(extrinsics, sm.Transformation):
+            raise RuntimeError("setExtrinsicsLastCamToHere(): provide extrinsics as an sm.Transformation object")
+
+        T_cn_some = extrinsics
+        baseline_old_HL = sm.Transformation()
+        if camNr > camNr_some:
+            for intercam in range(camNr_some, camNr):
+                baseline_old_HL = baseline_old_HL * self.getExtrinsicsLastCamToHere(intercam+1)
+            T_cn_cnm1_old = self.getExtrinsicsLastCamToHere(camNr)
+            self.data["cam{0}".format(camNr)]['T_cn_cnm1'] = (T_cn_some*baseline_old_HL*T_cn_cnm1_old).T().tolist()
+            if camNr+1 < self.numCameras():
+                T_cnp1_cn_old = self.getExtrinsicsLastCamToHere(camNr+1) 
+                self.data["cam{0}".format(camNr+1)]['T_cn_cnm1'] = (T_cnp1_cn_old*(T_cn_some*baseline_old_HL).inverse()).T().tolist()
+        if camNr < camNr_some:
+            for intercam in range(camNr, camNr_some):
+                baseline_old_HL = baseline_old_HL * self.getExtrinsicsLastCamToHere(intercam+1)
+            T_cnp1_cn_old = self.getExtrinsicsLastCamToHere(camNr+1) 
+            self.data["cam{0}".format(camNr+1)]['T_cn_cnm1'] = (T_cnp1_cn_old*(T_cn_some*baseline_old_HL).inverse()).T().tolist()
+            if camNr > 0:
+                T_cn_cnm1_old = self.getExtrinsicsLastCamToHere(camNr)
+                self.data["cam{0}".format(camNr)]['T_cn_cnm1'] = (T_cn_some*baseline_old_HL*T_cn_cnm1_old).T().tolist()
+
 
     @catch_keyerror
     def getExtrinsicsLastCamToHere(self, camNr):

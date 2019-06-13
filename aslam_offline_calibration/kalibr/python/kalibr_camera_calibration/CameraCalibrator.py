@@ -42,7 +42,8 @@ class CameraGeometry(object):
         self.dv = cameraModel.designVariable(self.geometry)
         self.setDvActiveStatus(True, True, False)
         self.isGeometryInitialized = False
-        
+        self.intrinsicsFixed = False
+
         #create target detector
         self.ctarget = TargetDetector(targetConfig, self.geometry, showCorners=verbose, showReproj=verbose)
 
@@ -72,11 +73,13 @@ class CameraGeometry(object):
         self.isGeometryInitialized = success        
         return success
 
-    def initGeometryFromConfig(self, camConfig):
+    def initGeometryFromConfig(self, camConfig, intrinsicsFixed=True):
         camera_dummy = cr.AslamCamera.fromParameters(camConfig)
         self.geometry = camera_dummy.geometry
         self.dv = self.model.designVariable(self.geometry)
         self.isGeometryInitialized = True        
+        self.intrinsicsFixed = intrinsicsFixed
+        self.setDvActiveStatus(False, False, False)
 
 
 class TargetDetector(object):
@@ -181,7 +184,8 @@ class CalibrationTargetOptimizationProblem(ic.CalibrationOptimizationProblem):
         for camera in cameras:
             if not camera.isGeometryInitialized:
                 raise RuntimeError('The camera geometry is not initialized. Please initialize with initGeometry() or initGeometryFromDataset()')
-            camera.setDvActiveStatus(True, True, False)
+            if not camera.intrinsicsFixed:
+                camera.setDvActiveStatus(True, True, False)
             rval.addDesignVariable(camera.dv.distortionDesignVariable(), CALIBRATION_GROUP_ID)
             rval.addDesignVariable(camera.dv.projectionDesignVariable(), CALIBRATION_GROUP_ID)
             rval.addDesignVariable(camera.dv.shutterDesignVariable(), CALIBRATION_GROUP_ID)
@@ -659,7 +663,7 @@ def printDebugEnd(cself):
     print
     print
 
-def saveChainParametersYaml(cself, resultFile, graph):
+def saveChainParametersYaml(cself, resultFile, graph, oldcamchain=None, cam_replace=None):
     cameraModels = {acvb.DistortedPinhole: 'pinhole',
                     acvb.EquidistantPinhole: 'pinhole',
                     acvb.FovPinhole: 'pinhole',
@@ -674,7 +678,6 @@ def saveChainParametersYaml(cself, resultFile, graph):
                         acvb.DistortedOmni: 'radtan',
                         acvb.ExtendedUnified: 'none',
                         acvb.DoubleSphere: 'none'}
-
     chain = cr.CameraChainParameters(resultFile, createYaml=True)
     for cam_id, cam in enumerate(cself.cameras):
         cameraModel = cameraModels[cam.model]
@@ -712,7 +715,37 @@ def saveChainParametersYaml(cself, resultFile, graph):
         camNr = bidx+1
         chain.setExtrinsicsLastCamToHere(camNr, baseline)
 
-    chain.writeYaml()
+    # write yaml
+    if oldcamchain is None:
+        chain.writeYaml()
+    else:
+        for topic in cam_replace:
+            camConfig,camNr = chain.getCameraParametersforTopic(topic)
+            camConfig_old, camNr_old = oldcamchain.getCameraParametersforTopic(topic)
+            camConfig_old.data["intrinsics"] = camConfig.data["intrinsics"]
+            camConfig_old.data["distortion_coeffs"] = camConfig.data["distortion_coeffs"]
+            oldcamchain.data["cam{0}".format(camNr_old)]=camConfig_old.getYamlDict()
+
+
+        for topic in cam_replace:
+            camConfig,camNr = chain.getCameraParametersforTopic(topic)
+            camConfig_old, camNr_old = oldcamchain.getCameraParametersforTopic(topic)
+            if camNr == 0 :
+                print "--------------camNr---------"
+                print camNr
+                camH_topic = chain.getCameraParameters(camNr+1).getRosTopic()
+                camConfig_old_H, camNr_old_H = oldcamchain.getCameraParametersforTopic(camH_topic)
+                baseline = chain.getExtrinsicsLastCamToHere(camNr+1).inverse()
+                print "cam old {0}, cam old H {1}, baseline {2}".format(camNr_old, camNr_old_H, baseline.T().tolist())
+                oldcamchain.setExtrinsicsSomeCamToHere(camNr_old, baseline, camNr_old_H)
+            else :
+                camL_topic = chain.getCameraParameters(camNr-1).getRosTopic()
+                camConfig_old_L, camNr_old_L = oldcamchain.getCameraParametersforTopic(camL_topic)
+                baseline = chain.getExtrinsicsLastCamToHere(camNr)
+                oldcamchain.setExtrinsicsSomeCamToHere(camNr_old, baseline, camNr_old_L)
+
+        chain.writeYaml()
+        oldcamchain.writeYaml(chain.yamlFile+'.complete.yaml')
 
 
 def plotOutlierCorners(cself, removedOutlierCorners, fno=1, clearFigure=True, title=""):

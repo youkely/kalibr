@@ -84,7 +84,7 @@ def parseArgs():
     groupSource.add_argument('--bag', dest='bagfile', help='The bag file with the data')
     groupSource.add_argument('--topics', nargs='+', dest='topics', help='The list of image topics', required=True)
     groupSource.add_argument('--bag-from-to', metavar='bag_from_to', type=float, nargs=2, help='Use the bag data starting from up to this time [s]')
-    groupSource.add_argument('--cam-to-replace', nargs='+', type=int, dest='cam_to_replace', help='The camera index whose data is updated by new bagfile')
+    groupSource.add_argument('--cam-to-replace-topic', nargs='+', dest='cam_to_replace_topic', help='The camera topic whose data is updated by new bagfile')
 
 
     groupTarget = parser.add_argument_group('Calibration target configuration')
@@ -163,7 +163,7 @@ def main():
     numCams = len(parsed.topics)
 
     obsdb = kcc.ObservationDatabase(parsed.max_delta_approxsync)
-
+    camchain = None
         
     for cam_id in range(0, numCams):
         topic = parsed.topics[cam_id]
@@ -189,14 +189,16 @@ def main():
             for obs in observations:
                 obsdb.addObservation(cam_id, obs)
 
-            if not parsed.chainYaml == '':
-                #initialize the intrinsics
-                camchain = kc.ConfigReader.CameraChainParameters(parsed.chainYaml)
-                camConfig = camchain.getCameraParameters(cam_id)
-                cam.initGeometryFromConfig(camConfig)
+            #initialize the intrinsics
+            if not parsed.chainYaml == '' and topic not in parsed.cam_to_replace_topic:
+                    print "initialize intrinsics from config file"
+                    camchain = kc.ConfigReader.CameraChainParameters(parsed.chainYaml)
+                    camConfig, _ = camchain.getCameraParametersforTopic(topic)
+                    cam.initGeometryFromConfig(camConfig)
 
 
             else:
+                print "initialize intrinsics from data"
                 if not cam.initGeometryFromObservations(observations):
                     raise RuntimeError("Could not initialize the intrinsics for camera with topic: {0}. Try to use --verbose and check whether the calibration target extraction is successful.".format(topic))
             
@@ -228,16 +230,10 @@ def main():
         try:
             #compute initial guesses for the baselines, intrinsics
             print "initializing initial guesses"
-            if not parsed.chainYaml == '':
-                baseline_guesses = []
-                for baseline_id in range(0, numCams-1):
-                    baseline_HL = camchain.getExtrinsicsLastCamToHere(baseline_id+1)
-                    baseline_guesses.append(baseline_HL)
-            else:    
-                if len(cameraList)>1:
-                    baseline_guesses = graph.getInitialGuesses(cameraList)
-                else:
-                    baseline_guesses=[]
+            if len(cameraList)>1:
+                baseline_guesses = graph.getInitialGuesses(cameraList)
+            else:
+                baseline_guesses=[]
                 
             if parsed.verbose and len(cameraList)>1:
                 graph.plotGraph()
@@ -431,7 +427,7 @@ def main():
             #write to file
             bagtag = parsed.bagfile.translate(None, "<>:/\|?*").replace('.bag', '', 1)
             resultFile = "camchain-" + bagtag + ".yaml"
-            kcc.saveChainParametersYaml(calibrator, resultFile, graph)
+            kcc.saveChainParametersYaml(calibrator, resultFile, graph, oldcamchain=camchain, cam_replace=parsed.cam_to_replace_topic)
             print "Results written to file: {0}".format(resultFile)
             
             #save results to file
