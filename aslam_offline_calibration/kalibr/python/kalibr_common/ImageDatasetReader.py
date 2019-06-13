@@ -6,45 +6,6 @@ import numpy as np
 import pylab as pl
 import aslam_cv as acv
 import sm
-from fnmatch import fnmatchcase
-
-
-def rosbag_merge(outputbag, inputbag, topics="*", verbose=False):
-
-    topics = topics.split(' ')
-
-    total_included_count = 0
-    total_skipped_count = 0
-
-    if (verbose):
-        print("Writing bag file: " + outputbag)
-        print("Matching topics against patters: '%s'" % ' '.join(topics))
-
-    with rosbag.Bag(outputbag, 'w') as o: 
-        for ifile in inputbag:
-            matchedtopics = []
-            included_count = 0
-            skipped_count = 0
-            if (verbose):
-                print("> Reading bag file: " + ifile)
-            with rosbag.Bag(ifile, 'r') as ib:
-                for topic, msg, t in ib:
-                    if any(fnmatchcase(topic, pattern) for pattern in topics):
-                        if not topic in matchedtopics:
-                            matchedtopics.append(topic)
-                            if (verbose):
-                                print("Including matched topic '%s'" % topic)
-                        o.write(topic, msg, t)
-                        included_count += 1
-                    else:
-                        skipped_count += 1
-            total_included_count += included_count
-            total_skipped_count += skipped_count
-            if (verbose):
-                print("< Included %d messages and skipped %d" % (included_count, skipped_count))
-
-    if (verbose):
-        print("Total: Included %d messages and skipped %d" % (total_included_count, total_skipped_count))
 
 
 class BagImageDatasetReaderIterator(object):
