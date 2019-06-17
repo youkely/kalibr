@@ -700,15 +700,15 @@ class CameraChainParameters(ParametersBase):
             for intercam in range(camNr_some, camNr):
                 baseline_old_HL = baseline_old_HL * self.getExtrinsicsLastCamToHere(intercam+1)
             T_cn_cnm1_old = self.getExtrinsicsLastCamToHere(camNr)
-            self.data["cam{0}".format(camNr)]['T_cn_cnm1'] = (T_cn_some*baseline_old_HL*T_cn_cnm1_old).T().tolist()
+            self.data["cam{0}".format(camNr)]['T_cn_cnm1'] = (T_cn_some*(baseline_old_HL.inverse())*T_cn_cnm1_old).T().tolist()
             if camNr+1 < self.numCameras():
                 T_cnp1_cn_old = self.getExtrinsicsLastCamToHere(camNr+1) 
-                self.data["cam{0}".format(camNr+1)]['T_cn_cnm1'] = (T_cnp1_cn_old*(T_cn_some*baseline_old_HL).inverse()).T().tolist()
+                self.data["cam{0}".format(camNr+1)]['T_cn_cnm1'] = (T_cnp1_cn_old*baseline_old_HL*(T_cn_some.inverse())).T().tolist()
         if camNr < camNr_some:
             for intercam in range(camNr, camNr_some):
                 baseline_old_HL = baseline_old_HL * self.getExtrinsicsLastCamToHere(intercam+1)
             T_cnp1_cn_old = self.getExtrinsicsLastCamToHere(camNr+1) 
-            self.data["cam{0}".format(camNr+1)]['T_cn_cnm1'] = (T_cnp1_cn_old*(T_cn_some*baseline_old_HL).inverse()).T().tolist()
+            self.data["cam{0}".format(camNr+1)]['T_cn_cnm1'] = (T_cnp1_cn_old*((T_cn_some*baseline_old_HL).inverse())).T().tolist()
             if camNr > 0:
                 T_cn_cnm1_old = self.getExtrinsicsLastCamToHere(camNr)
                 self.data["cam{0}".format(camNr)]['T_cn_cnm1'] = (T_cn_some*baseline_old_HL*T_cn_cnm1_old).T().tolist()

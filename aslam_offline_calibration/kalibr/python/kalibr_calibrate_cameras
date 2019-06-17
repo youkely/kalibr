@@ -82,6 +82,7 @@ def parseArgs():
     
     groupSource = parser.add_argument_group('Data source')
     groupSource.add_argument('--bag', dest='bagfile', help='The bag file with the data')
+    groupSource.add_argument('--result', dest='resultname', help='The output result file name')
     groupSource.add_argument('--topics', nargs='+', dest='topics', help='The list of image topics', required=True)
     groupSource.add_argument('--bag-from-to', metavar='bag_from_to', type=float, nargs=2, help='Use the bag data starting from up to this time [s]')
     groupSource.add_argument('--cam-to-replace-topic', nargs='+', dest='cam_to_replace_topic', help='The camera topic whose data is updated by new bagfile')
@@ -426,6 +427,8 @@ def main():
             
             #write to file
             bagtag = parsed.bagfile.translate(None, "<>:/\|?*").replace('.bag', '', 1)
+            if parsed.resultname is not None:
+                bagtag = parsed.resultname
             resultFile = "camchain-" + bagtag + ".yaml"
             kcc.saveChainParametersYaml(calibrator, resultFile, graph, oldcamchain=camchain, cam_replace=parsed.cam_to_replace_topic)
             print "Results written to file: {0}".format(resultFile)

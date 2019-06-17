@@ -739,9 +739,11 @@ def saveChainParametersYaml(cself, resultFile, graph, oldcamchain=None, cam_repl
                 print "cam old {0}, cam old H {1}, baseline {2}".format(camNr_old, camNr_old_H, baseline.T().tolist())
                 oldcamchain.setExtrinsicsSomeCamToHere(camNr_old, baseline, camNr_old_H)
             else :
+                print "--------------camNr---------"
                 camL_topic = chain.getCameraParameters(camNr-1).getRosTopic()
                 camConfig_old_L, camNr_old_L = oldcamchain.getCameraParametersforTopic(camL_topic)
                 baseline = chain.getExtrinsicsLastCamToHere(camNr)
+                print "cam old {0}, cam old L {1}, baseline {2}".format(camNr_old, camNr_old_L, baseline.T().tolist())
                 oldcamchain.setExtrinsicsSomeCamToHere(camNr_old, baseline, camNr_old_L)
 
         chain.writeYaml()
