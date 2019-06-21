@@ -257,9 +257,10 @@ def removeCornersFromBatch(batch, camId_cornerIdList_tuples, useBlakeZissermanMe
     return new_problem
         
 class CameraCalibration(object):
-    def __init__(self, cameras, baseline_guesses, estimateLandmarks=False, verbose=False, useBlakeZissermanMest=True):
+    def __init__(self, cameras, baseline_guesses, estimateLandmarks=False, verbose=False, useBlakeZissermanMest=True, numCamsReplaced=0):
         self.cameras = cameras
         self.useBlakeZissermanMest = useBlakeZissermanMest
+        self.numCamsReplaced = numCamsReplaced
         #create the incremental estimator
         self.estimator = ic.IncrementalEstimator(CALIBRATION_GROUP_ID)
         self.linearSolverOptions = self.estimator.getLinearSolverOptions()
@@ -268,12 +269,19 @@ class CameraCalibration(object):
         self.initializeBaselineDVs(baseline_guesses)
         #storage for the used views
         self.views = list()
-        
+
     def initializeBaselineDVs(self, baseline_guesses):
         self.baselines = list()
         for baseline_idx in range(0, len(self.cameras)-1): 
             self.baselines.append( aopt.TransformationDv(baseline_guesses[baseline_idx]) )
-            
+        if self.numCamsReplaced > 0:
+            self.fixBaselineDVs()
+    def fixBaselineDVs(self):
+        for baseline_idx in range(0, len(self.cameras)-1-self.numCamsReplaced):
+            baseline_dv = self.getBaseline(baseline_idx)
+            for i in range(0, baseline_dv.numDesignVariables()):
+                baseline_dv.getDesignVariable(i).setActive(False)
+
     def getBaseline(self, i):
         return self.baselines[i]
     
@@ -380,7 +388,6 @@ def getReprojectionErrorStatistics(all_rerrs):
             for rerr in view_rerrs:
                 if not (rerr==np.array([None,None])).all(): #if corner was observed
                     rerr_matrix.append(rerr)
-    
     
     rerr_matrix = np.array(rerr_matrix)
     gc.enable()
@@ -568,8 +575,10 @@ def recoverCovariance(cself):
     #                c) shutter    --> 0
     
     numCams = len(cself.cameras)
-    est_stds = np.sqrt(cself.estimator.getSigma2Theta().diagonal())
 
+    est_stds = np.sqrt(cself.estimator.getSigma2Theta().diagonal())
+    if cself.numCamsReplaced > 0:
+        est_stds = np.concatenate((np.zeros(6*(numCams-1-cself.numCamsReplaced)),est_stds))
     #split the variance for baselines
     baseline_cov = est_stds[0:6*(numCams-1)]
     std_baselines = np.array(baseline_cov).reshape(numCams-1,6).tolist()
@@ -583,10 +592,12 @@ def recoverCovariance(cself):
         nt = cam.geometry.minimalDimensionsDistortion() +  \
              cam.geometry.minimalDimensionsProjection() +  \
              cam.geometry.minimalDimensionsShutter()
-        
-        std_cameras.append( cam_cov[offset:offset+nt].flatten().tolist() )
-        offset = offset+nt
-    
+        if cself.numCamsReplaced > 0 and cidx < numCams-cself.numCamsReplaced:
+            std_cameras.append(np.zeros(nt).tolist())
+        else:
+            std_cameras.append( cam_cov[offset:offset+nt].flatten().tolist() )
+            offset = offset+nt
+
     return std_baselines, std_cameras
 
 def printParameters(cself, dest=sys.stdout):
@@ -607,7 +618,7 @@ def printParameters(cself, dest=sys.stdout):
         
         #reproj error statistics
         corners, reprojs, rerrs = getReprojectionErrors(cself, cidx)        
-        if len(rerrs)>0:
+        if len(rerrs)>0 and not all(x is None for x in rerrs):
             me, se = getReprojectionErrorStatistics(rerrs)
             print >> dest, "\t reprojection error: [%f, %f] +- [%f, %f]" % (me[0], me[1], se[0], se[1])
         print >> dest
@@ -804,6 +815,8 @@ def generateReport(cself, filename="report.pdf", showOnScreen=True, graph=None, 
         
     #plot for each camera
     for cidx, cam in enumerate(cself.cameras):
+        if cself.numCamsReplaced > 0 and cidx < len(cself.cameras)-cself.numCamsReplaced:
+            continue
         f = pl.figure(cidx*10+1)
         title="cam{0}: polar error".format(cidx)
         plotPolarError(cself, cidx, fno=f.number, noShow=True, title=title)

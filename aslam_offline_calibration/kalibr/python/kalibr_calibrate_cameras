@@ -162,10 +162,36 @@ def main():
     #create camera objects, initialize the intrinsics and extract targets
     cameraList = list()
     numCams = len(parsed.topics)
-
+    if parsed.cam_to_replace_topic is not None:
+        numCamsReplaced = len(parsed.cam_to_replace_topic)
+    else:
+        numCamsReplaced = 0
     obsdb = kcc.ObservationDatabase(parsed.max_delta_approxsync)
     camchain = None
-        
+    if not parsed.chainYaml == '':
+        if parsed.cam_to_replace_topic is None:
+            sm.logError("cam-to-replace-topic is None")
+            sys.exit(0)
+        camchain = kc.ConfigReader.CameraChainParameters(parsed.chainYaml)
+        topics_ordered = []
+        models_ordered = []
+        topics_replaced = []
+        models_replaced = []
+        for cam_id in range(0, numCams):
+            topic = parsed.topics[cam_id]
+            modelName = parsed.models[cam_id]
+            if topic not in parsed.cam_to_replace_topic:
+                topics_ordered.append(topic)
+                models_ordered.append(modelName)
+            else:
+                topics_replaced.append(topic)
+                models_replaced.append(modelName)
+        topics_ordered.extend(topics_replaced)
+        models_ordered.extend(models_replaced)
+        parsed.topics = topics_ordered
+        parsed.models = models_ordered
+
+
     for cam_id in range(0, numCams):
         topic = parsed.topics[cam_id]
         modelName = parsed.models[cam_id]
@@ -191,9 +217,8 @@ def main():
                 obsdb.addObservation(cam_id, obs)
 
             #initialize the intrinsics
-            if not parsed.chainYaml == '' and topic not in parsed.cam_to_replace_topic:
+            if camchain is not None and topic not in parsed.cam_to_replace_topic:
                     print "initialize intrinsics from config file"
-                    camchain = kc.ConfigReader.CameraChainParameters(parsed.chainYaml)
                     camConfig, _ = camchain.getCameraParametersforTopic(topic)
                     cam.initGeometryFromConfig(camConfig)
 
@@ -231,10 +256,23 @@ def main():
         try:
             #compute initial guesses for the baselines, intrinsics
             print "initializing initial guesses"
-            if len(cameraList)>1:
-                baseline_guesses = graph.getInitialGuesses(cameraList)
-            else:
-                baseline_guesses=[]
+            if camchain is not None :
+                baseline_guesses = []
+                for baseline_id in range(0, numCams-1-numCamsReplaced):
+                    camConfig_low, camNr_low = camchain.getCameraParametersforTopic(parsed.topics[baseline_id])
+                    camConfig_high, camNr_high = camchain.getCameraParametersforTopic(parsed.topics[baseline_id+1])
+                    baseline_HL = camchain.getTransformationCamFromTo(camNr_low, camNr_high)
+                    baseline_guesses.append(baseline_HL)
+
+                baseline_guesses_origin = graph.getInitialGuesses(cameraList)
+                baseline_guesses.extend(baseline_guesses_origin[-numCamsReplaced:])
+                obsdb.replaceViewFilrering(numCamsReplaced)
+
+            else:    
+                if len(cameraList)>1:
+                    baseline_guesses = graph.getInitialGuesses(cameraList)
+                else:
+                    baseline_guesses=[]
                 
             if parsed.verbose and len(cameraList)>1:
                 graph.plotGraph()
@@ -250,7 +288,8 @@ def main():
                 
 
             print "initializing calibrator"
-            calibrator = kcc.CameraCalibration(cameraList, baseline_guesses, verbose=parsed.verbose, useBlakeZissermanMest=parsed.doBlakeZisserman)
+            calibrator = kcc.CameraCalibration(cameraList, baseline_guesses, verbose=parsed.verbose, useBlakeZissermanMest=parsed.doBlakeZisserman, numCamsReplaced=numCamsReplaced)
+
             options = calibrator.estimator.getOptions()
             options.infoGainDelta = parsed.miTol
             options.checkValidity = True
@@ -274,6 +313,7 @@ def main():
             if parsed.maxPairView < 500:
                 print "---------------------pre filtering-----------------"
                 obsdb.preFilrering(parsed.maxPairView)
+
 
             #shuffle the views
             timestamps = obsdb.getAllViewTimestamps()
