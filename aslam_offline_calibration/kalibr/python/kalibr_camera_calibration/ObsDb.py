@@ -102,9 +102,13 @@ class ObservationDatabase(object):
     def replaceViewFilrering(self, numCamsReplaced):
         print "previous views {0}.".format(len(self.getAllViewTimestamps()))
         for timestamp in self.getAllViewTimestamps():
+            keepthisframe = False
             for camid in range(self.numCameras() - numCamsReplaced, self.numCameras()):
-                if camid not in self.getCamIdsAtTimestamp(timestamp):
-                   self.targetViews.pop(timestamp)
+                if camid in self.getCamIdsAtTimestamp(timestamp):
+                    keepthisframe = True
+                    break
+            if not keepthisframe:
+                self.targetViews.pop(timestamp)
         print "Recalibration used views {0}.".format(len(self.getAllViewTimestamps()))
 
 
