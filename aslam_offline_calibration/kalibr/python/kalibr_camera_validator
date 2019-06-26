@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import rospy
+import rosbag
 from std_msgs.msg import String
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge, CvBridgeError
@@ -7,6 +8,7 @@ import message_filters
 
 import cv2
 import sm
+from sm import PlotCollection
 import aslam_cv as acv
 import aslam_cv_backend as acvb
 import aslam_cameras_april as acv_april
@@ -20,6 +22,9 @@ import argparse
 import sys
 import getopt
 import igraph
+
+from matplotlib.backends.backend_pdf import PdfPages
+
 
 # make numpy print prettier
 np.set_printoptions(suppress=True)
@@ -65,10 +70,12 @@ class CameraChainValidator(object):
         self.chainConfig = chainConfig
         self.numCameras = chainConfig.numCameras()
         self.bridge = CvBridge()
+        self.imgcount = 0
         
         #initialize the cameras in the chain
         self.G = igraph.Graph(self.numCameras)
         self.monovalidators=[]
+
         for cidx in range(0, self.numCameras):
             camConfig = chainConfig.getCameraParameters(cidx)
             
@@ -91,7 +98,9 @@ class CameraChainValidator(object):
             cidx_dest = edge.target
 
             edge["rect_map"]=dict();edge["R"]=dict();edge["A"]=dict();
-            
+            edge["reproj_errs"]=[]
+            edge["reproj_L2_errs"]=[]
+
             edge["rect_map"][cidx_src], \
             edge["rect_map"][cidx_dest], \
             edge["R"][cidx_src], \
@@ -112,6 +121,7 @@ class CameraChainValidator(object):
         timeNow = time.time()
         if (timeNow-self.timeLast < 1.0/rate) and self.timeLast!=0:
             return
+        self.imgcount += 1
         self.timeLast = timeNow
          
         #process the images of all cameras
@@ -264,6 +274,11 @@ class CameraChainValidator(object):
         if len(common_ids) > 0:
             #draw error statistics
             reproj_L2_errs = np.sum(np.abs(reproj_errs)**2, axis=-2)**(1./2)
+
+            #save the errors for reprojection error of edges
+            edge["reproj_errs"].append(reproj_errs)
+            edge["reproj_L2_errs"].append(reproj_L2_errs)
+
             outputList = [ ( "mean_x:  ", np.mean(reproj_errs[:,0]) ),
                            ( "std_x:   ", np.std(reproj_errs[:,0]) ),
                            ( "max_y:   ", np.max(reproj_errs[:,0]) ),
@@ -363,8 +378,179 @@ class CameraChainValidator(object):
                                                                  cv2.CV_16SC2)
         
         return (rect_map_x_a, rect_map_y_a), (rect_map_x_b, rect_map_y_b), Ra, Rb, A, A
-    
+    def printValidationResult(self, errorthres):
+        camtag = parsed.chainYaml.translate(None, "<>:\|?*").replace('.yaml', '', 1)
+        resultFile = camtag + "-validation-result.txt"
+        f1=open(resultFile, 'w')
+        print >> f1, "Validation results "
+        print >> f1, "Processed {0} images".format(self.imgcount)
+        print >> f1, "===================="
+
+        for cidx in range(0, self.numCameras):
+            monovalidator = self.monovalidators[cidx]
+            if not monovalidator.reprojectionErrors == [] :
+                reprojectionErrors = np.concatenate( monovalidator.reprojectionErrors, axis=0 )
+                print >> f1, "Camera No.{0}".format(cidx)
+                print >> f1, "------------------------------------------"
+                if np.mean(reprojectionErrors) < errorthres.getYamlDict()['camErrorTol']:
+                    print >> f1, "------------good calibration--------------"
+                else:
+                    print >> f1, "-------------bad calibration--------------"
+                print >> f1, "------------------------------------------"
+                print >> f1,  "coverage for cam is {0:.2}".format(self.monovalidators[cidx].coverageRate)
+                print >> f1,  "     mean_L2: {0}".format(np.mean(reprojectionErrors))
+                print >> f1,  "     std_L2:  {0}".format(np.std(reprojectionErrors))
+                print >> f1,  "     max_L2:  {0}".format(np.max(reprojectionErrors))
+                print >> f1,  "     min_L2:  {0}".format(np.min(reprojectionErrors))
+
+            else:
+                print >> f1, "Camera No. {0} has no validation data".format(cidx)
+            print >> f1, ""
+
+        for edge in self.G.es:
+            cidx_src = edge.source
+            cidx_dest = edge.target
+            edge_idx = self.G.get_eid(cidx_src, cidx_dest)
+            edge = self.G.es[edge_idx]
+            if not edge["reproj_L2_errs"] == [] :
+                reprojectionErrors = np.concatenate( edge["reproj_L2_errs"], axis=0 )
+                print >> f1, "Rig between cam{0} and cam{1}".format(cidx_src, cidx_dest)
+                print >> f1, "------------------------------------------"
+                if np.mean(reprojectionErrors) < errorthres.getYamlDict()['rigErrorTol']:
+                    print >> f1, "------------good calibration--------------"
+                else:
+                    print >> f1, "-------------bad calibration--------------"
+                print >> f1, "------------------------------------------"
+                print >> f1,  "     mean_L2: {0}".format(np.mean(reprojectionErrors))
+                print >> f1,  "     std_L2:  {0}".format(np.std(reprojectionErrors))
+                print >> f1,  "     max_L2:  {0}".format(np.max(reprojectionErrors))
+                print >> f1,  "     min_L2:  {0}".format(np.min(reprojectionErrors))
+            else:
+                print >> f1, "No rig data for camera {} and {}".format(cidx_src, cidx_dest)
+            print >> f1, ""
+
+        # generate pdf
+        figs = list()    
+        reportFile = camtag + "-validation-result.pdf"
+        plotter = PlotCollection.PlotCollection("Validation report")
+
+        for cidx in range(0, self.numCameras):
+            monovalidator = self.monovalidators[cidx]
+            f = pl.figure(cidx)
+            title="cam{0}: reprojection errors".format(cidx)
+            self.plotAllReprojectionErrorsMono(cidx, fno=f.number, noShow=True, title=title)
+            plotter.add_figure(title, f)
+            figs.append(f)
+
+        for edge in self.G.es:
+            cidx_src = edge.source
+            cidx_dest = edge.target
+            edge_idx = self.G.get_eid(cidx_src, cidx_dest)
+            edge = self.G.es[edge_idx]
+            if edge["reproj_L2_errs"] != []:
+                f = pl.figure(edge_idx+100)
+                title="cam{0} and cam{1} rig: reprojection errors".format(cidx_src, cidx_dest)
+                self.plotAllReprojectionErrorsPair(edge, fno=f.number, noShow=True, title=title)
+                plotter.add_figure(title, f)
+                figs.append(f)
+
+
+        #save to pdf
+        pdf=PdfPages(reportFile)
+        for fig in figs:
+            pdf.savefig(fig)
+        pdf.close()
+
+
+    def plotAllReprojectionErrorsMono(self, cidx, fno=1, noShow=False, clearFigure=True, title=""):
+
+        all_corners = self.monovalidators[cidx].cornersImages
+        rerrs_xy = self.monovalidators[cidx].reprojectionErrors2
+
+        resolution = (self.monovalidators[cidx].camera.geometry.projection().ru(), 
+            self.monovalidators[cidx].camera.geometry.projection().rv())
+
+
+        #check validation result
+        monovalidator = self.monovalidators[cidx]
+        if not monovalidator.reprojectionErrors == [] :
+            reprojectionErrors = np.concatenate( monovalidator.reprojectionErrors, axis=0 )
+
+        #create figure
+        f = pl.figure(fno)
+        if clearFigure:    
+            f.clf()
+        f.suptitle(title)
         
+        values = np.arange(len(self.monovalidators[cidx].cornersImages))/np.double(len(self.monovalidators[cidx].cornersImages))
+        cmap = pl.cm.jet(values,alpha=0.5)
+        
+        #detected corners plot
+        a=pl.subplot(121)
+        for view_id, corners in enumerate(all_corners):
+            if corners is not None: #if this camerea sees the target in this view
+                color = cmap[view_id,:]
+                pl.plot(corners[:,0], corners[:,1],'o-', mfc=color, c=color, mec=color)
+        #add an empty image to force the aspect ratio
+        I=np.zeros((resolution[1], resolution[0]))
+        pl.imshow(I, cmap='Greys')
+        pl.xlabel('mean reproj error:{0:.2}\n coverage: {1:.2}'.format(np.mean(reprojectionErrors),self.monovalidators[cidx].coverageRate))
+        #reprojection errors scatter plot
+        sub = pl.subplot(122)
+        for view_id, rerrs in enumerate(rerrs_xy):
+            if rerrs is not None: #if this camerea sees the target in this view
+                color = cmap[view_id,:]
+                pl.plot(rerrs[:,0], rerrs[:,1], 'x', lw=3, mew=3, color=color)
+
+        pl.axis('equal')
+        pl.grid('on')
+        pl.xlabel('error x (pix)')
+        pl.ylabel('error y (pix)')
+
+        SM = pl.cm.ScalarMappable(pl.cm.colors.Normalize(0.0,len(self.monovalidators[cidx].cornersImages)), pl.cm.jet)
+        SM.set_array(np.arange(len(self.monovalidators[cidx].cornersImages)));
+        cb = pl.colorbar(SM)
+        cb.set_label('image index')
+
+
+    def plotAllReprojectionErrorsPair(self, edge, fno=1, noShow=False, clearFigure=True, title=""):
+
+        rerrs_xy = edge["reproj_errs"]
+        rerrs_xy_L2 = edge["reproj_L2_errs"]
+
+        #check validation result
+        if not rerrs_xy_L2 == [] :
+            reprojectionErrors = np.concatenate( rerrs_xy_L2, axis=0 )
+        #create figure
+        f = pl.figure(fno)
+        if clearFigure:    
+            f.clf()
+        f.suptitle(title)
+        f.set_size_inches(6,6)
+
+        values = np.arange(len(edge["reproj_errs"]))/np.double(len(edge["reproj_errs"]))
+        cmap = pl.cm.jet(values,alpha=0.5)
+        
+        #reprojection errors scatter plot
+        a=pl.subplot(211)
+        for view_id, rerrs in enumerate(rerrs_xy):
+            if rerrs is not None: #if this camerea sees the target in this view
+                color = cmap[view_id,:]
+                pl.plot(rerrs[0,:], rerrs[1,:], 'x', lw=3, mew=3, color=color)
+
+        pl.axis('equal')
+        pl.grid('on')
+        pl.xlabel('error x (pix)')
+        pl.ylabel('error y (pix)')
+        if not rerrs_xy_L2 == [] :
+            pl.xlabel('error x (pix)\n mean reproj error:{0:.2}'.format(np.mean(reprojectionErrors)))
+
+        SM = pl.cm.ScalarMappable(pl.cm.colors.Normalize(0.0,len(edge["reproj_errs"])), pl.cm.jet)
+        SM.set_array(np.arange(len(edge["reproj_errs"])));
+        cb = pl.colorbar(SM)
+        cb.set_label('image index')
+
+
 class MonoCameraValidator(object):
     def __init__(self, camConfig, targetParams):
         
@@ -395,9 +581,14 @@ class MonoCameraValidator(object):
             self.undist_camera = self.undistorter.getIdealGeometry()
             
         #storage for reproj errors
-        self.cornersImage = list()
+        resolution = (self.camera.geometry.projection().ru(), 
+            self.camera.geometry.projection().rv())
+        self.grid_size = 20
+        self.cornersImages = list()
+        self.reprojectionErrors2 = list()
         self.reprojectionErrors = list()
-        
+        self.coverageMap = np.zeros([resolution[0]/self.grid_size+1, resolution[1]/self.grid_size+1])
+
     
     def generateMonoview(self, np_image, observation, obs_valid):
         np_image = cv2.cvtColor(np_image, cv2.COLOR_GRAY2BGR)
@@ -406,14 +597,20 @@ class MonoCameraValidator(object):
             #calculate the reprojection error statistics
             cornersImage = observation.getCornersImageFrame();
             cornersReproj = observation.getCornerReprojection(self.camera.geometry);
-            
+
             reprojectionErrors2 = cornersImage-cornersReproj
             reprojectionErrors = np.sum(np.abs(reprojectionErrors2)**2, axis=-1)**(1./2)
             
             #save the errors for reprojection error map plotting
-            self.cornersImage.append(cornersImage)
+            self.cornersImages.append(cornersImage)
+            self.reprojectionErrors2.append(reprojectionErrors2)
             self.reprojectionErrors.append(reprojectionErrors)
-            
+            self.addtoCoverageMap(cornersImage)
+            self.coverageRate = np.count_nonzero(self.coverageMap)/float(
+                self.coverageMap.shape[0]*self.coverageMap.shape[1])
+            print "coverage for cam {0}: {1:.2}".format(self.topic, self.coverageRate)
+            if (self.coverageRate > 0.70):
+                print "------Enough validation data for cam {0}-------".format(self.topic)
             outputList = [ ( "mean_x:  ", np.mean(reprojectionErrors2[:,0]) ),
                            ( "std_x:   ", np.std(reprojectionErrors2[:,0]) ),
                            ( "max_y:   ", np.max(reprojectionErrors2[:,0]) ),
@@ -456,12 +653,21 @@ class MonoCameraValidator(object):
         cv2.imshow(self.windowName, np_image)
         cv2.waitKey(1)
 
+    def addtoCoverageMap(self, cornersImage):
+        for corner in cornersImage:
+            self.coverageMap[int(corner[0]/self.grid_size), int(corner[1]/self.grid_size)] += 1
+
 
 if __name__ == "__main__":        
     parser = argparse.ArgumentParser(description='Validate the intrinsics of a camera.')
     parser.add_argument('--target', dest='targetYaml', help='Calibration target configuration as yaml file', required=True)
     parser.add_argument('--cam', dest='chainYaml', help='Camera configuration as yaml file', required=True)
     parser.add_argument('--verbose', action='store_true', dest='verbose', help='Verbose output')
+    parser.add_argument('--save', action='store_true', dest='saveResult', help='Save result')
+    parser.add_argument('--input-bag', dest='inputBag', default='', help='Input bag data set for validation')
+    parser.add_argument('--cam-error-thres', dest='camErrorTol', default=0.3, type=float, help='threshold for mono camera reprojection error')
+    parser.add_argument('--rig-error-thres', dest='rigErrorTol', default=0.5, type=float, help='threshold for camera rig reprojection error')
+    parser.add_argument('--errer-thres-yaml', dest='ErrorTol', help='threshold yaml file for camera rig reprojection error')
     parsed = parser.parse_args()
         
     if parsed.verbose:
@@ -479,11 +685,44 @@ if __name__ == "__main__":
     #create the validator
     chain_validator = CameraChainValidator(camchain, targetConfig)
     
-    #ros message loops
-    rospy.init_node('kalibr_validator', anonymous=True)
-    try:
-        rospy.spin()
-    except KeyboardInterrupt:
-        print "Shutting down"
+    if parsed.inputBag == '':
+        #ros message loops
+        rospy.init_node('kalibr_validator', anonymous=True)
+        try:
+            rospy.spin()
+        except KeyboardInterrupt:
+            print "Shutting down"
+        cv2.destroyAllWindows()
+
+    else:
+        image_count = 0
+        image_topics = [val.topic for val in chain_validator.monovalidators]
+        image_msgs = [None] * chain_validator.numCameras
+        image_msgs_count = np.zeros(chain_validator.numCameras)
+        reader = kc.BagImageDatasetReader(parsed.inputBag, chain_validator.monovalidators[0].topic)
+
+        with rosbag.Bag(parsed.inputBag, 'r') as ib:
+            for topic, msg, t in ib:
+                if topic in image_topics and image_msgs_count[image_topics.index(topic)] == 0:
+                    image_msgs[image_topics.index(topic)] = msg
+                    image_msgs_count[image_topics.index(topic)] = 1
+                    if sum(image_msgs_count) == chain_validator.numCameras:
+                        chain_validator.synchronizedCallback(*image_msgs)
+                        image_msgs_count = np.zeros(chain_validator.numCameras)
+                        image_msgs = [None] * chain_validator.numCameras
+                        image_count += 1
+                        print "image No. {0} out of {1} images".format(image_count, reader.numImages())
+        cv2.destroyAllWindows()
     
-    cv2.destroyAllWindows()
+    if parsed.ErrorTol is not None:
+        errorthres = kc.ConfigReader.ParametersBase(parsed.ErrorTol, 'errorthres')
+    else:
+        errorthres = kc.ConfigReader.ParametersBase('Dummy', 'errorthres', createYaml=True)
+        thres = dict()
+        thres['camErrorTol'] = parsed.camErrorTol
+        thres['rigErrorTol'] = parsed.rigErrorTol
+        errorthres.setYamlDict(thres)
+
+    if parsed.saveResult:
+        chain_validator.printValidationResult(errorthres)
+

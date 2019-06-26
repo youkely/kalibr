@@ -42,7 +42,8 @@ class CameraGeometry(object):
         self.dv = cameraModel.designVariable(self.geometry)
         self.setDvActiveStatus(True, True, False)
         self.isGeometryInitialized = False
-        
+        self.intrinsicsFixed = False
+
         #create target detector
         self.ctarget = TargetDetector(targetConfig, self.geometry, showCorners=verbose, showReproj=verbose)
 
@@ -71,6 +72,15 @@ class CameraGeometry(object):
         
         self.isGeometryInitialized = success        
         return success
+
+    def initGeometryFromConfig(self, camConfig, intrinsicsFixed=True):
+        camera_dummy = cr.AslamCamera.fromParameters(camConfig)
+        self.geometry = camera_dummy.geometry
+        self.dv = self.model.designVariable(self.geometry)
+        self.isGeometryInitialized = True        
+        self.intrinsicsFixed = intrinsicsFixed
+        self.setDvActiveStatus(False, False, False)
+
 
 class TargetDetector(object):
     def __init__(self, targetConfig, cameraGeometry, showCorners=False, showReproj=False, showOneStep=False):
@@ -174,7 +184,8 @@ class CalibrationTargetOptimizationProblem(ic.CalibrationOptimizationProblem):
         for camera in cameras:
             if not camera.isGeometryInitialized:
                 raise RuntimeError('The camera geometry is not initialized. Please initialize with initGeometry() or initGeometryFromDataset()')
-            camera.setDvActiveStatus(True, True, False)
+            if not camera.intrinsicsFixed:
+                camera.setDvActiveStatus(True, True, False)
             rval.addDesignVariable(camera.dv.distortionDesignVariable(), CALIBRATION_GROUP_ID)
             rval.addDesignVariable(camera.dv.projectionDesignVariable(), CALIBRATION_GROUP_ID)
             rval.addDesignVariable(camera.dv.shutterDesignVariable(), CALIBRATION_GROUP_ID)
@@ -246,9 +257,10 @@ def removeCornersFromBatch(batch, camId_cornerIdList_tuples, useBlakeZissermanMe
     return new_problem
         
 class CameraCalibration(object):
-    def __init__(self, cameras, baseline_guesses, estimateLandmarks=False, verbose=False, useBlakeZissermanMest=True):
+    def __init__(self, cameras, baseline_guesses, estimateLandmarks=False, verbose=False, useBlakeZissermanMest=True, numCamsReplaced=0):
         self.cameras = cameras
         self.useBlakeZissermanMest = useBlakeZissermanMest
+        self.numCamsReplaced = numCamsReplaced
         #create the incremental estimator
         self.estimator = ic.IncrementalEstimator(CALIBRATION_GROUP_ID)
         self.linearSolverOptions = self.estimator.getLinearSolverOptions()
@@ -257,12 +269,19 @@ class CameraCalibration(object):
         self.initializeBaselineDVs(baseline_guesses)
         #storage for the used views
         self.views = list()
-        
+
     def initializeBaselineDVs(self, baseline_guesses):
         self.baselines = list()
         for baseline_idx in range(0, len(self.cameras)-1): 
             self.baselines.append( aopt.TransformationDv(baseline_guesses[baseline_idx]) )
-            
+        if self.numCamsReplaced > 0:
+            self.fixBaselineDVs()
+    def fixBaselineDVs(self):
+        for baseline_idx in range(0, len(self.cameras)-1-self.numCamsReplaced):
+            baseline_dv = self.getBaseline(baseline_idx)
+            for i in range(0, baseline_dv.numDesignVariables()):
+                baseline_dv.getDesignVariable(i).setActive(False)
+
     def getBaseline(self, i):
         return self.baselines[i]
     
@@ -369,7 +388,6 @@ def getReprojectionErrorStatistics(all_rerrs):
             for rerr in view_rerrs:
                 if not (rerr==np.array([None,None])).all(): #if corner was observed
                     rerr_matrix.append(rerr)
-    
     
     rerr_matrix = np.array(rerr_matrix)
     gc.enable()
@@ -557,8 +575,10 @@ def recoverCovariance(cself):
     #                c) shutter    --> 0
     
     numCams = len(cself.cameras)
-    est_stds = np.sqrt(cself.estimator.getSigma2Theta().diagonal())
 
+    est_stds = np.sqrt(cself.estimator.getSigma2Theta().diagonal())
+    if cself.numCamsReplaced > 0:
+        est_stds = np.concatenate((np.zeros(6*(numCams-1-cself.numCamsReplaced)),est_stds))
     #split the variance for baselines
     baseline_cov = est_stds[0:6*(numCams-1)]
     std_baselines = np.array(baseline_cov).reshape(numCams-1,6).tolist()
@@ -572,10 +592,12 @@ def recoverCovariance(cself):
         nt = cam.geometry.minimalDimensionsDistortion() +  \
              cam.geometry.minimalDimensionsProjection() +  \
              cam.geometry.minimalDimensionsShutter()
-        
-        std_cameras.append( cam_cov[offset:offset+nt].flatten().tolist() )
-        offset = offset+nt
-    
+        if cself.numCamsReplaced > 0 and cidx < numCams-cself.numCamsReplaced:
+            std_cameras.append(np.zeros(nt).tolist())
+        else:
+            std_cameras.append( cam_cov[offset:offset+nt].flatten().tolist() )
+            offset = offset+nt
+
     return std_baselines, std_cameras
 
 def printParameters(cself, dest=sys.stdout):
@@ -596,7 +618,7 @@ def printParameters(cself, dest=sys.stdout):
         
         #reproj error statistics
         corners, reprojs, rerrs = getReprojectionErrors(cself, cidx)        
-        if len(rerrs)>0:
+        if len(rerrs)>0 and not all(x is None for x in rerrs):
             me, se = getReprojectionErrorStatistics(rerrs)
             print >> dest, "\t reprojection error: [%f, %f] +- [%f, %f]" % (me[0], me[1], se[0], se[1])
         print >> dest
@@ -652,7 +674,7 @@ def printDebugEnd(cself):
     print
     print
 
-def saveChainParametersYaml(cself, resultFile, graph):
+def saveChainParametersYaml(cself, resultFile, graph, oldcamchain=None, cam_replace=None):
     cameraModels = {acvb.DistortedPinhole: 'pinhole',
                     acvb.EquidistantPinhole: 'pinhole',
                     acvb.FovPinhole: 'pinhole',
@@ -667,7 +689,6 @@ def saveChainParametersYaml(cself, resultFile, graph):
                         acvb.DistortedOmni: 'radtan',
                         acvb.ExtendedUnified: 'none',
                         acvb.DoubleSphere: 'none'}
-
     chain = cr.CameraChainParameters(resultFile, createYaml=True)
     for cam_id, cam in enumerate(cself.cameras):
         cameraModel = cameraModels[cam.model]
@@ -705,7 +726,34 @@ def saveChainParametersYaml(cself, resultFile, graph):
         camNr = bidx+1
         chain.setExtrinsicsLastCamToHere(camNr, baseline)
 
-    chain.writeYaml()
+    # write yaml
+    if oldcamchain is None:
+        chain.writeYaml()
+    else:
+        for topic in cam_replace:
+            camConfig,camNr = chain.getCameraParametersforTopic(topic)
+            camConfig_old, camNr_old = oldcamchain.getCameraParametersforTopic(topic)
+            camConfig_old.data["intrinsics"] = camConfig.data["intrinsics"]
+            camConfig_old.data["distortion_coeffs"] = camConfig.data["distortion_coeffs"]
+            oldcamchain.data["cam{0}".format(camNr_old)]=camConfig_old.getYamlDict()
+
+
+        for topic in cam_replace:
+            camConfig,camNr = chain.getCameraParametersforTopic(topic)
+            camConfig_old, camNr_old = oldcamchain.getCameraParametersforTopic(topic)
+            if camNr == 0 :
+                print camNr
+                camH_topic = chain.getCameraParameters(camNr+1).getRosTopic()
+                camConfig_old_H, camNr_old_H = oldcamchain.getCameraParametersforTopic(camH_topic)
+                baseline = chain.getExtrinsicsLastCamToHere(camNr+1).inverse()
+                oldcamchain.setExtrinsicsSomeCamToHere(camNr_old, baseline, camNr_old_H)
+            else :
+                camL_topic = chain.getCameraParameters(camNr-1).getRosTopic()
+                camConfig_old_L, camNr_old_L = oldcamchain.getCameraParametersforTopic(camL_topic)
+                baseline = chain.getExtrinsicsLastCamToHere(camNr)
+                oldcamchain.setExtrinsicsSomeCamToHere(camNr_old, baseline, camNr_old_L)
+
+        oldcamchain.writeYaml(chain.yamlFile)
 
 
 def plotOutlierCorners(cself, removedOutlierCorners, fno=1, clearFigure=True, title=""):
@@ -762,6 +810,8 @@ def generateReport(cself, filename="report.pdf", showOnScreen=True, graph=None, 
         
     #plot for each camera
     for cidx, cam in enumerate(cself.cameras):
+        if cself.numCamsReplaced > 0 and cidx < len(cself.cameras)-cself.numCamsReplaced:
+            continue
         f = pl.figure(cidx*10+1)
         title="cam{0}: polar error".format(cidx)
         plotPolarError(cself, cidx, fno=f.number, noShow=True, title=title)
