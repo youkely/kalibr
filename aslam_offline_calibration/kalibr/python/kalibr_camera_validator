@@ -100,6 +100,9 @@ class CameraChainValidator(object):
             edge["rect_map"]=dict();edge["R"]=dict();edge["A"]=dict();
             edge["reproj_errs"]=[]
             edge["reproj_L2_errs"]=[]
+            edge["extrinsic_errs"]=[]
+            edge['commonKeypoints_A']=[]
+            edge['commonKeypoints_B']=[]
 
             edge["rect_map"][cidx_src], \
             edge["rect_map"][cidx_dest], \
@@ -202,7 +205,7 @@ class CameraChainValidator(object):
     def generatePairView(self, camAnr, camBnr):
         #prepare the window
         windowName = "Rectified view (cam{0} and cam{1})".format(camAnr, camBnr)
-        cv2.namedWindow(windowName, 1)
+        cv2.namedWindow(windowName, 0)
             
         #get the mono validators for each cam
         camA = self.monovalidators[camAnr]
@@ -217,7 +220,6 @@ class CameraChainValidator(object):
         keypoints_B = camB.obs.getCornersImageFrame()
         keypoints_B_id = camB.obs.getCornersIdx()
         targetPoints = camA.obs.getCornersTargetFrame()
-        
         #get the common corners
         common_ids = set(keypoints_A_id) & set(keypoints_B_id)
         
@@ -252,7 +254,12 @@ class CameraChainValidator(object):
                 
             reproj_errs = reproj_errs[2:]
             reproj_errs = reproj_errs.reshape(2, reproj_errs.shape[0]/2)
-                    
+            
+            T_diff = T_BA*T_AW*T_BW.inverse()
+            R_diff = np.matrix(T_diff.C())
+            t_diff = np.matrix(T_diff.t()).reshape(3,1)
+            extrinsic_err = np.array([np.arccos((np.trace(R_diff)-1)/2), np.linalg.norm(t_diff)])
+
         #rectify the undistorted images
         edge_idx = self.G.get_eid(camAnr, camBnr)
         edge = self.G.es[edge_idx]
@@ -278,6 +285,12 @@ class CameraChainValidator(object):
             #save the errors for reprojection error of edges
             edge["reproj_errs"].append(reproj_errs)
             edge["reproj_L2_errs"].append(reproj_L2_errs)
+            edge["extrinsic_errs"].append(extrinsic_err)
+
+            commonKeypoints_A = np.vstack(commonKeypoints_A)
+            commonKeypoints_B = np.vstack(commonKeypoints_B)
+            edge['commonKeypoints_A'].append(commonKeypoints_A)
+            edge['commonKeypoints_B'].append(commonKeypoints_B)
 
             outputList = [ ( "mean_x:  ", np.mean(reproj_errs[:,0]) ),
                            ( "std_x:   ", np.std(reproj_errs[:,0]) ),
@@ -450,7 +463,7 @@ class CameraChainValidator(object):
             if edge["reproj_L2_errs"] != []:
                 f = pl.figure(edge_idx+100)
                 title="cam{0} and cam{1} rig: reprojection errors".format(cidx_src, cidx_dest)
-                self.plotAllReprojectionErrorsPair(edge, fno=f.number, noShow=True, title=title)
+                self.plotAllReprojectionErrorsPair(edge, cidx_src, cidx_dest, fno=f.number, noShow=True, title=title)
                 plotter.add_figure(title, f)
                 figs.append(f)
 
@@ -513,10 +526,15 @@ class CameraChainValidator(object):
         cb.set_label('image index')
 
 
-    def plotAllReprojectionErrorsPair(self, edge, fno=1, noShow=False, clearFigure=True, title=""):
+    def plotAllReprojectionErrorsPair(self, edge, cidx_src, cidx_dest, fno=1, noShow=False, clearFigure=True, title=""):
 
         rerrs_xy = edge["reproj_errs"]
         rerrs_xy_L2 = edge["reproj_L2_errs"]
+        extrinsic_errs = edge["extrinsic_errs"]
+        corners_A = edge["commonKeypoints_A"]
+        corners_B = edge["commonKeypoints_B"]
+        resolution = (self.monovalidators[cidx_src].camera.geometry.projection().ru(), 
+            self.monovalidators[cidx_src].camera.geometry.projection().rv())
 
         #check validation result
         if not rerrs_xy_L2 == [] :
@@ -526,13 +544,35 @@ class CameraChainValidator(object):
         if clearFigure:    
             f.clf()
         f.suptitle(title)
-        f.set_size_inches(6,6)
+        f.set_size_inches(10,10)
 
         values = np.arange(len(edge["reproj_errs"]))/np.double(len(edge["reproj_errs"]))
         cmap = pl.cm.jet(values,alpha=0.5)
         
+
+        #detected corners plot A
+        a=pl.subplot(221)
+        for view_id, corners in enumerate(corners_A):
+            if corners is not None: #if this camerea sees the target in this view
+                color = cmap[view_id,:]
+                pl.plot(corners[:,0], corners[:,1],'o-', mfc=color, c=color, mec=color)
+        #add an empty image to force the aspect ratio
+        I=np.zeros((resolution[1], resolution[0]))
+        pl.imshow(I, cmap='Greys')
+
+        #detected corners plot B
+        a=pl.subplot(223)
+        for view_id, corners in enumerate(corners_B):
+            if corners is not None: #if this camerea sees the target in this view
+                color = cmap[view_id,:]
+                pl.plot(corners[:,0], corners[:,1],'o-', mfc=color, c=color, mec=color)
+        #add an empty image to force the aspect ratio
+        I=np.zeros((resolution[1], resolution[0]))
+        pl.imshow(I, cmap='Greys')
+
+
         #reprojection errors scatter plot
-        a=pl.subplot(211)
+        a=pl.subplot(222)
         for view_id, rerrs in enumerate(rerrs_xy):
             if rerrs is not None: #if this camerea sees the target in this view
                 color = cmap[view_id,:]
@@ -545,11 +585,23 @@ class CameraChainValidator(object):
         if not rerrs_xy_L2 == [] :
             pl.xlabel('error x (pix)\n mean reproj error:{0:.2}'.format(np.mean(reprojectionErrors)))
 
+        #reprojection errors scatter plot
+        a=pl.subplot(224)
+        for view_id, rerrs in enumerate(extrinsic_errs):
+            if rerrs is not None: #if this camerea sees the target in this view
+                color = cmap[view_id,:]
+                pl.plot(rerrs[0], rerrs[1], 'x', lw=3, mew=3, color=color)
+
+        pl.axis('equal')
+        pl.grid('on')
+        pl.xlabel('extrinsic error rotation (radius)\n mean rotation err:{0:.5}\n mean translation err:{1:.5}' \
+            .format(np.mean(np.asarray(extrinsic_errs)[:,0]), np.mean(np.asarray(extrinsic_errs)[:,1])))
+        pl.ylabel('extrinsic error translation (m)')
+
         SM = pl.cm.ScalarMappable(pl.cm.colors.Normalize(0.0,len(edge["reproj_errs"])), pl.cm.jet)
         SM.set_array(np.arange(len(edge["reproj_errs"])));
         cb = pl.colorbar(SM)
         cb.set_label('image index')
-
 
 class MonoCameraValidator(object):
     def __init__(self, camConfig, targetParams):
@@ -564,7 +616,7 @@ class MonoCameraValidator(object):
         
         self.topic = camConfig.getRosTopic()
         self.windowName = "Camera: {0}".format(self.topic)
-        cv2.namedWindow(self.windowName, 1)
+        cv2.namedWindow(self.windowName, 0)
     
         #register the cam topic to the message synchronizer
         self.image_sub = message_filters.Subscriber(self.topic, Image)
@@ -664,6 +716,7 @@ if __name__ == "__main__":
     parser.add_argument('--cam', dest='chainYaml', help='Camera configuration as yaml file', required=True)
     parser.add_argument('--verbose', action='store_true', dest='verbose', help='Verbose output')
     parser.add_argument('--save', action='store_true', dest='saveResult', help='Save result')
+    parser.add_argument('--downsample-rate', dest='downsample_rate', default=3, type=int, help='Downsample rate for rosbag message')
     parser.add_argument('--input-bag', dest='inputBag', default='', help='Input bag data set for validation')
     parser.add_argument('--cam-error-thres', dest='camErrorTol', default=0.3, type=float, help='threshold for mono camera reprojection error')
     parser.add_argument('--rig-error-thres', dest='rigErrorTol', default=0.5, type=float, help='threshold for camera rig reprojection error')
@@ -674,6 +727,15 @@ if __name__ == "__main__":
         sm.setLoggingLevel(sm.LoggingLevel.Debug)
     else:
         sm.setLoggingLevel(sm.LoggingLevel.Info)
+
+    if parsed.ErrorTol is not None:
+        errorthres = kc.ConfigReader.ParametersBase(parsed.ErrorTol, 'errorthres')
+    else:
+        errorthres = kc.ConfigReader.ParametersBase('Dummy', 'errorthres', createYaml=True)
+        thres = dict()
+        thres['camErrorTol'] = parsed.camErrorTol
+        thres['rigErrorTol'] = parsed.rigErrorTol
+        errorthres.setYamlDict(thres)
 
     #load the configuration yamls
     targetConfig = kc.ConfigReader.CalibrationTargetParameters(parsed.targetYaml)
@@ -701,27 +763,25 @@ if __name__ == "__main__":
         image_msgs_count = np.zeros(chain_validator.numCameras)
         reader = kc.BagImageDatasetReader(parsed.inputBag, chain_validator.monovalidators[0].topic)
 
-        with rosbag.Bag(parsed.inputBag, 'r') as ib:
-            for topic, msg, t in ib:
-                if topic in image_topics and image_msgs_count[image_topics.index(topic)] == 0:
-                    image_msgs[image_topics.index(topic)] = msg
-                    image_msgs_count[image_topics.index(topic)] = 1
-                    if sum(image_msgs_count) == chain_validator.numCameras:
-                        chain_validator.synchronizedCallback(*image_msgs)
-                        image_msgs_count = np.zeros(chain_validator.numCameras)
-                        image_msgs = [None] * chain_validator.numCameras
-                        image_count += 1
-                        print "image No. {0} out of {1} images".format(image_count, reader.numImages())
-        cv2.destroyAllWindows()
-    
-    if parsed.ErrorTol is not None:
-        errorthres = kc.ConfigReader.ParametersBase(parsed.ErrorTol, 'errorthres')
-    else:
-        errorthres = kc.ConfigReader.ParametersBase('Dummy', 'errorthres', createYaml=True)
-        thres = dict()
-        thres['camErrorTol'] = parsed.camErrorTol
-        thres['rigErrorTol'] = parsed.rigErrorTol
-        errorthres.setYamlDict(thres)
+        try:
+            with rosbag.Bag(parsed.inputBag, 'r') as ib:
+                for topic, msg, t in ib:
+                    if topic in image_topics and image_msgs_count[image_topics.index(topic)] == 0:
+                        image_msgs[image_topics.index(topic)] = msg
+                        image_msgs_count[image_topics.index(topic)] = 1
+                        if sum(image_msgs_count) == chain_validator.numCameras:
+                            if image_count % parsed.downsample_rate == 0:
+                                chain_validator.synchronizedCallback(*image_msgs)
+                                print "image No. {0} out of {1} images".format(image_count, reader.numImages())
+                            image_count += 1
+                            image_msgs_count = np.zeros(chain_validator.numCameras)
+                            image_msgs = [None] * chain_validator.numCameras
+            cv2.destroyAllWindows()
+        except KeyboardInterrupt:
+            print('Interrupted')
+            cv2.destroyAllWindows()
+            if parsed.saveResult:
+                chain_validator.printValidationResult(errorthres)
 
     if parsed.saveResult:
         chain_validator.printValidationResult(errorthres)
