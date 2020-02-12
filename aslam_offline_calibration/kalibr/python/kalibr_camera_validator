@@ -393,7 +393,7 @@ class CameraChainValidator(object):
         return (rect_map_x_a, rect_map_y_a), (rect_map_x_b, rect_map_y_b), Ra, Rb, A, A
     def printValidationResult(self, errorthres):
         camtag = parsed.chainYaml.translate(None, "<>:\|?*").replace('.yaml', '', 1)
-        resultFile = camtag + "-validation-result.txt"
+        resultFile = camtag + "-validation-result-validate-on" + os.path.splitext(os.path.basename(parsed.inputBag))[0] + ".txt"
         f1=open(resultFile, 'w')
         print >> f1, "Validation results "
         print >> f1, "Processed {0} images".format(self.imgcount)
@@ -444,7 +444,7 @@ class CameraChainValidator(object):
 
         # generate pdf
         figs = list()    
-        reportFile = camtag + "-validation-result.pdf"
+        reportFile =  camtag + "-validation-result-validate-on" + os.path.splitext(os.path.basename(parsed.inputBag))[0] + ".pdf"
         plotter = PlotCollection.PlotCollection("Validation report")
 
         for cidx in range(0, self.numCameras):
@@ -716,7 +716,7 @@ if __name__ == "__main__":
     parser.add_argument('--cam', dest='chainYaml', help='Camera configuration as yaml file', required=True)
     parser.add_argument('--verbose', action='store_true', dest='verbose', help='Verbose output')
     parser.add_argument('--save', action='store_true', dest='saveResult', help='Save result')
-    parser.add_argument('--downsample-rate', dest='downsample_rate', default=3, type=int, help='Downsample rate for rosbag message')
+    parser.add_argument('--downsample-rate', dest='downsample_rate', default=2, type=int, help='Downsample rate for rosbag message')
     parser.add_argument('--input-bag', dest='inputBag', default='', help='Input bag data set for validation')
     parser.add_argument('--cam-error-thres', dest='camErrorTol', default=0.3, type=float, help='threshold for mono camera reprojection error')
     parser.add_argument('--rig-error-thres', dest='rigErrorTol', default=0.5, type=float, help='threshold for camera rig reprojection error')
