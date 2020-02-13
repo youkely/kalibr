@@ -63,7 +63,10 @@ class CalibrationTargetDetector(object):
         options = acv.GridDetectorOptions() 
         options.filterCornerOutliers = True
         self.detector = acv.GridDetector(camera.geometry, grid, options)
-    
+
+def reject_outliers(data, m=2):
+    return data[abs(data - np.mean(data)) < m * np.std(data)]
+
 class CameraChainValidator(object):
     def __init__(self, chainConfig, targetParams):
         
@@ -255,7 +258,7 @@ class CameraChainValidator(object):
             reproj_errs = reproj_errs[2:]
             reproj_errs = reproj_errs.reshape(2, reproj_errs.shape[0]/2)
             
-            T_diff = T_BA*T_AW*T_BW.inverse()
+            T_diff = T_AW*(T_BW.inverse())*T_BA
             R_diff = np.matrix(T_diff.C())
             t_diff = np.matrix(T_diff.t()).reshape(3,1)
             extrinsic_err = np.array([np.arccos((np.trace(R_diff)-1)/2), np.linalg.norm(t_diff)])
@@ -582,8 +585,11 @@ class CameraChainValidator(object):
         pl.grid('on')
         pl.xlabel('error x (pix)')
         pl.ylabel('error y (pix)')
+
         if not rerrs_xy_L2 == [] :
-            pl.xlabel('error x (pix)\n mean reproj error:{0:.2}'.format(np.mean(reprojectionErrors)))
+            pl.xlabel('error x (pix)\n mean reproj error:{0:.2f}, {1:.2f}(<2sigma)'.\
+                format(np.mean(reprojectionErrors), \
+                np.mean(reject_outliers(reprojectionErrors, 2))))
 
         #reprojection errors scatter plot
         a=pl.subplot(224)
@@ -594,8 +600,10 @@ class CameraChainValidator(object):
 
         pl.axis('equal')
         pl.grid('on')
-        pl.xlabel('extrinsic error rotation (radius)\n mean rotation err:{0:.5}\n mean translation err:{1:.5}' \
-            .format(np.mean(np.asarray(extrinsic_errs)[:,0]), np.mean(np.asarray(extrinsic_errs)[:,1])))
+        pl.xlabel('extrinsic error rotation (radius)\n mean rotation err:{0:.6f}, {2:.6f}(<2sigma)\n mean translation err:{1:.6f}, {3:.6f}(<2sigma)' \
+            .format(np.mean(np.asarray(extrinsic_errs)[:,0]), np.mean(np.asarray(extrinsic_errs)[:,1]), \
+            np.mean(reject_outliers(np.asarray(extrinsic_errs)[:,0], 2)), 
+            np.mean(reject_outliers(np.asarray(extrinsic_errs)[:,1], 2)) ))
         pl.ylabel('extrinsic error translation (m)')
 
         SM = pl.cm.ScalarMappable(pl.cm.colors.Normalize(0.0,len(edge["reproj_errs"])), pl.cm.jet)
