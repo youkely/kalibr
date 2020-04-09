@@ -258,7 +258,19 @@ class CameraChainValidator(object):
             reproj_errs = reproj_errs[2:]
             reproj_errs = reproj_errs.reshape(2, reproj_errs.shape[0]/2)
             
-            T_diff = T_AW*(T_BW.inverse())*T_BA
+            # T_diff = T_AW*(T_BW.inverse())*T_BA
+            # print("T_AW*(T_BW.inverse())*T_BA")
+            # print(np.matrix(T_diff.t()).reshape(3,1))
+            # T_diff = T_BW*(T_AW.inverse())*T_BA.inverse()
+            # print("T_AW*(T_BW.inverse())*T_BA")
+            # print(np.matrix(T_diff.t()).reshape(3,1))
+            # T_diff = (T_BW.inverse())*T_BA * T_AW
+            # print("(T_BW.inverse())*T_BA * T_AW")
+            # print(np.matrix(T_diff.t()).reshape(3,1))
+            # T_diff = (T_AW.inverse())*(T_BA.inverse()) * T_BW
+            # print("(T_AW.inverse())*(T_BA.inverse()) * T_BW")
+            # print(np.matrix(T_diff.t()).reshape(3,1))
+            T_diff = (T_AW.inverse())*(T_BA.inverse()) * T_BW
             R_diff = np.matrix(T_diff.C())
             t_diff = np.matrix(T_diff.t()).reshape(3,1)
             extrinsic_err = np.array([np.arccos((np.trace(R_diff)-1)/2), np.linalg.norm(t_diff)])
@@ -510,7 +522,7 @@ class CameraChainValidator(object):
         #add an empty image to force the aspect ratio
         I=np.zeros((resolution[1], resolution[0]))
         pl.imshow(I, cmap='Greys')
-        pl.xlabel('mean reproj error:{0:.2}\n coverage: {1:.2}'.format(np.mean(reprojectionErrors),self.monovalidators[cidx].coverageRate))
+        pl.xlabel('mean reproj error:{0:.2f}\n coverage: {1:.2f}'.format(np.mean(reprojectionErrors),self.monovalidators[cidx].coverageRate))
         #reprojection errors scatter plot
         sub = pl.subplot(122)
         for view_id, rerrs in enumerate(rerrs_xy):

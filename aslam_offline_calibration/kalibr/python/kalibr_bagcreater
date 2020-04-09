@@ -5,7 +5,7 @@ import rosbag
 import rospy
 from sensor_msgs.msg import Image
 from sensor_msgs.msg import Imu
-import ImageFile
+from PIL import ImageFile
 import time, sys, os
 import argparse
 import cv2
