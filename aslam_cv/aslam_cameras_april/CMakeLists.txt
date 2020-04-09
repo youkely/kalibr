@@ -4,7 +4,7 @@ project(aslam_cameras_april)
 find_package(catkin_simple REQUIRED)
 catkin_simple()
 
-find_package(OpenCV REQUIRED)
+find_package(OpenCV 3.2 REQUIRED)
 
 ADD_DEFINITIONS(-DASLAM_USE_ROS )
 include_directories(${Eigen_INCLUDE_DIRS})

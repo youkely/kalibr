@@ -8,7 +8,7 @@ include_directories(${catkin_INCLUDE_DIRS})
 find_package(Eigen REQUIRED)
 
 catkin_package(
-    DEPENDS eigen opencv
+    DEPENDS eigen opencv2
     INCLUDE_DIRS include ${Eigen_INCLUDE_DIRS}
     LIBRARIES ${PROJECT_NAME}
 )
@@ -16,7 +16,7 @@ catkin_package(
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${PROJECT_SOURCE_DIR}/cmake/)
 
 find_package(Eigen REQUIRED)
-find_package(OpenCV REQUIRED)
+find_package(OpenCV 3.2 REQUIRED)
 
 add_definitions(-fPIC -O3)
 include_directories(include  ${Eigen_INCLUDE_DIRS} ${catkin_INCLUDE_DIRS})
